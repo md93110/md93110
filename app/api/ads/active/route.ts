@@ -1,6 +1,19 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
+}
+
 type AdRow = {
   id: string;
   campaign_id: string;
@@ -36,38 +49,47 @@ function getTargetCategories(value: unknown): string[] {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+
     const requestedCategory =
       searchParams.get("category")?.trim() || "";
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseUrl =
+      process.env.NEXT_PUBLIC_SUPABASE_URL;
+
     const supabaseKey =
       process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
-      console.error("Variables Supabase manquantes.");
+      console.error(
+        "Variables Supabase manquantes."
+      );
 
       return NextResponse.json(
         {
           success: false,
           ads: [],
-          error: "Configuration Supabase manquante.",
+          error:
+            "Configuration Supabase manquante.",
         },
-        { status: 500 }
+        {
+          status: 500,
+          headers: corsHeaders,
+        }
       );
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
+    const supabase = createClient(
+      supabaseUrl,
+      supabaseKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      }
+    );
 
-    // IMPORTANT :
-    // On conserve le fonctionnement historique de HORZ ADS :
-    // une publicité dont ads.status = "active" est diffusible.
-    // Le ciblage par catégorie est le SEUL nouveau filtre ajouté ici.
     const { data, error } = await supabase
       .from("ads")
       .select(
@@ -87,68 +109,121 @@ export async function GET(request: Request) {
       .eq("status", "active");
 
     if (error) {
-      console.error("Erreur récupération HORZ ADS :", error);
+      console.error(
+        "Erreur récupération HORZ ADS :",
+        error
+      );
 
       return NextResponse.json(
         {
           success: false,
           ads: [],
-          error: "Impossible de récupérer les publicités.",
+          error:
+            "Impossible de récupérer les publicités.",
         },
-        { status: 500 }
+        {
+          status: 500,
+          headers: corsHeaders,
+        }
       );
     }
 
     const rows = (data ?? []) as AdRow[];
 
-    const eligibleAds = rows.filter((ad: AdRow) => {
-      const targets = getTargetCategories(ad.target_categories);
-
-      // [] = toutes les catégories.
-      if (targets.length === 0) {
-        return true;
+    console.log(
+      "HORZ ADS CONFIG :",
+      {
+        url: supabaseUrl,
+        hasServiceRole:
+          Boolean(
+            process.env.SUPABASE_SERVICE_ROLE_KEY
+          ),
+        hasPublishable:
+          Boolean(
+            process.env
+              .NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+          ),
       }
+    );
 
-      // Une publicité ciblée ne peut être diffusée que si
-      // l'application nous transmet une catégorie.
-      if (!requestedCategory) {
-        return false;
+    console.log(
+      "HORZ ADS DEBUG - rows reçues :",
+      rows
+    );
+
+    const eligibleAds = rows.filter(
+      (ad: AdRow) => {
+        const targets =
+          getTargetCategories(
+            ad.target_categories
+          );
+
+        // [] = toutes les catégories
+        if (targets.length === 0) {
+          return true;
+        }
+
+        // Une publicité ciblée nécessite
+        // une catégorie transmise par l'application.
+        if (!requestedCategory) {
+          return false;
+        }
+
+        const normalizedRequested =
+          normalizeCategory(
+            requestedCategory
+          );
+
+        return targets.some(
+          (target: string) =>
+            normalizeCategory(target) ===
+            normalizedRequested
+        );
       }
+    );
 
-      const normalizedRequested =
-        normalizeCategory(requestedCategory);
-
-      return targets.some(
-        (target: string) =>
-          normalizeCategory(target) === normalizedRequested
-      );
-    });
-
-    return NextResponse.json({
-      success: true,
-      ads: eligibleAds.map((ad: AdRow) => ({
-        ad_id: ad.id,
-        campaign_id: ad.campaign_id,
-        name: ad.name,
-        title: ad.title,
-        description: ad.description,
-        type: ad.type,
-        media_url: ad.media_url,
-        destination_url: ad.destination_url,
-        status: ad.status,
-        target_categories: ad.target_categories,
-      })),
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        ads: eligibleAds.map(
+          (ad: AdRow) => ({
+            ad_id: ad.id,
+            campaign_id: ad.campaign_id,
+            name: ad.name,
+            title: ad.title,
+            description: ad.description,
+            type: ad.type,
+            media_url: ad.media_url,
+            destination_url:
+              ad.destination_url,
+            status: ad.status,
+            target_categories:
+              ad.target_categories,
+          })
+        ),
+      },
+      {
+        status: 200,
+        headers: corsHeaders,
+      }
+    );
   } catch (error) {
-    console.error("Erreur API HORZ ADS :", error);
+    console.error(
+      "Erreur API HORZ ADS :",
+      error
+    );
 
     return NextResponse.json(
       {
         success: false,
         ads: [],
-        error: "Une erreur est survenue.",
+        error:
+          "Une erreur est survenue.",
       },
-      { status: 500 }
+      {
+        status: 500,
+        headers: corsHeaders,
+      }
     );
   }
 }
